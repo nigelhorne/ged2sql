@@ -1,0 +1,376 @@
+#!/usr/bin/env perl
+
+# ged2sql - import a gedcom into an SQL database
+
+# This is only just getting started, but I want to create a project in
+#	GitHub as a placeholder
+
+# Author Nigel Horne: njh@bandsman.co.uk
+# Copyright (C) 2019, Nigel Horne
+
+# Usage is subject to licence terms.
+# The licence terms of this software are as follows:
+# Personal single user, single computer use: GPL2
+# All other users (including Commercial, Charity, Educational, Government)
+#	must apply in writing for a licence for use from Nigel Horne at the
+#	above e-mail.
+
+use strict;
+use warnings;
+use autodie qw(:all);
+use warnings::unused;
+
+use DBI;
+use Gedcom;
+use Lingua::EN::NameCase;
+use Lingua::EN::NameParse;
+
+my %opts;
+my $sqlite_file = 'out.sql';
+
+if(-e $sqlite_file) {
+	unlink $sqlite_file;
+}
+
+my $dbh = DBI->connect("dbi:SQLite:dbname=$sqlite_file", undef, undef, { RaiseError => 1, AutoCommit => 0, synchronous => 0, locking_mode => 'EXCLUSIVE' });
+$dbh->do('PRAGMA cache_size = 65536');
+$dbh->do('PRAGMA journal_mode = OFF');
+
+$dbh->do('CREATE TABLE people(xref CHAR(6) NOT NULL, surname VARCHAR, mother CHAR(6), father CHAR(6), PRIMARY KEY (xref), FOREIGN KEY (mother) REFERENCES people(xref), FOREIGN KEY (father) REFERENCES people(xref));');
+$dbh->do('CREATE TABLE siblings(xref CHAR(6), sibling CHAR(6) NOT NULL, PRIMARY KEY (xref, sibling), FOREIGN KEY (sibling) REFERENCES people(xref));');
+my @everyone = Gedcom->new(gedcom_file => $ARGV[0], read_only => 1)->individuals();
+$dbh->do('CREATE TABLE children(xref CHAR(6), child CHAR(6) NOT NULL, PRIMARY KEY (xref, child), FOREIGN KEY (child) REFERENCES people(xref));');
+$dbh->do('CREATE TABLE spouses(xref CHAR(6), spouse CHAR(6) NOT NULL, PRIMARY KEY (xref, spouse), FOREIGN KEY (spouse) REFERENCES people(xref));');
+
+my $nameparser = Lingua::EN::NameParse->new(extended_titles => 1, initials => 1);
+
+generate(
+	everyone => \@everyone,
+	dbh => $dbh,
+);
+
+$dbh->commit();
+$dbh->disconnect();
+
+sub generate {
+	my %params = (ref($_[0]) eq 'HASH') ? %{$_[0]} : @_;
+
+	# my $nameparser = $params{'nameparser'};
+
+	foreach my $person(@{$params{'everyone'}}) {
+		my $xref = $person->xref();
+		my $mother = $person->mother() || 'NULL';
+		my $father = $person->father() || 'NULL';
+
+		my $name = $person->name();
+		$name =~ s/\///g;
+		$nameparser->parse($name);
+		my %name_components = $nameparser->components();
+		my $firstname = $name_components{'given_name_1'};
+		my $surname = $name_components{'surname_1'};
+		if($surname) {
+			$surname =~ s/\'/\\\'/g;
+		} else {
+			$surname = 'NULL';
+		}
+
+		print "$firstname, $surname\n";
+
+		my $query = "INSERT INTO people('xref', 'surname', 'mother', 'father') VALUES (?, ?, ?, ?);";
+		my $statement = $dbh->prepare($query);
+		print "$xref: $surname\n";
+		die unless($statement->execute($xref, $surname, $mother, $father) == 1);
+
+		my @siblings = $person->siblings();
+		if(scalar(@siblings)) {
+			$query = "INSERT INTO siblings('xref', 'sibling') VALUES (?, ?);";
+			$statement = $dbh->prepare($query);
+			foreach my $s(@siblings) {
+				print ">$xref: $surname: ", $s->xref(), "\n";
+				die unless($statement->execute($xref, $s->xref()) == 1);
+			}
+		}
+
+		my @children = $person->children();
+		if(scalar(@children)) {
+			$query = "INSERT INTO children('xref', 'child') VALUES (?, ?);";
+			$statement = $dbh->prepare($query);
+			foreach my $c(@children) {
+				print ">>$xref: $surname: ", $c->xref(), "\n";
+				die unless($statement->execute($xref, $c->xref()) == 1);
+			}
+		}
+
+		my @spouses = $person->spouse();
+		if(scalar(@spouses)) {
+			$query = "INSERT INTO spouses('xref', 'spouse') VALUES (?, ?);";
+			$statement = $dbh->prepare($query);
+			foreach my $s(@spouses) {
+				print ">>>$xref: $surname: ", $s->xref(), "\n";
+				print $s->as_string(), "\n";
+				die unless($statement->execute($xref, $s->xref()) == 1);
+			}
+		}
+	}
+}
+
+sub Gedcom::Individual::as_string
+{
+	my $self = shift;
+	my %args = (ref($_[0]) eq 'HASH') ? %{$_[0]} : @_;
+
+	my $name;
+
+	if($args{'use_aka'}) {
+		my $n2 = $self->tag_record('NAME', 2);
+		if(defined($n2) && (ref($n2) eq 'Gedcom::Record') && defined($n2->type()) && ($n2->type() eq 'AlsoKnownAs') && ($n2->value() ne $self->name())) {
+			$name = $n2->value();
+		} else {
+			return;
+		}
+	} else {
+		$name = $self->name();
+	}
+
+	$name =~ s/\///g;
+	$nameparser->parse($name);
+
+	my %name_components = $nameparser->components();
+	my $first_name = $name_components{'given_name_1'};
+	my $middle_name = $name_components{'middle_name'};
+	my $surname = $name_components{'surname_1'};
+	if($name_components{'surname_2'}) {
+		$surname .= ' ' . $name_components{'surname_2'};
+	}
+	if($name_components{'non_matching'}) {
+		if($name =~ /(\w{2,})\s(\w{2,})\s(\w+)\s(\w{2,})/) {
+			# Name parser doesn't parse names like this very well
+			$first_name = $1;
+			$middle_name = "$2 $3";
+			$surname = $4;
+		} else {
+			if($surname) {
+				$surname .= ' ';
+			}
+			my $rest = $name_components{'non_matching'};
+			if($rest =~ /(.+) $/) {
+				$rest = $1;
+			}
+			$surname .= $rest;
+
+			# Remove the middle name, since it's come in from the non_matching
+			$middle_name = undef;
+			delete $args{'middle_names'};
+		}
+	} elsif(!defined($surname)) {
+		$surname = $self->surname();
+	}
+
+	my $has_maiden_name;
+	if($args{'nee'}) {
+		my $sex = get_value({ person => $self, value => 'sex' });
+		if(defined($sex) && ($sex eq 'F')) {
+			if(my $husband = $self->husband()) {
+				$surname = $husband->surname();
+				$has_maiden_name = 1;
+			} elsif(my $spouse = $self->spouse()) {
+				complain({ person => $self, warning => 'married, but no husband relationship' });
+				$surname = $spouse->surname();
+				$has_maiden_name = 1;
+			}
+		}
+	}
+
+	my $rc;
+
+	if($args{'title'} && $name_components{'title_1'}) {
+		$rc = $name_components{'title_1'};
+		if($rc) {
+			$rc .= ' ';
+		}
+	}
+
+	if($first_name) {
+		$rc .= $first_name;
+	} elsif($self->given_names()) {
+		$rc .= $self->given_names();
+	} elsif($args{'print_unknown'}) {
+		$rc .= ' ?';
+	}
+
+	if($args{'middle_names'}) {
+		if($middle_name) {
+			$rc .= " $middle_name";
+		} elsif($name =~ /\s([A-Z])\s.+/) {
+			# Just an initial has been given
+			$rc .= " $1";
+		}
+	}
+
+	if($surname) {
+		if($rc) {
+			$rc .= ' ';
+		}
+		$rc .= normalize_name($surname);
+		if(my $suffix = $name_components{'suffix'}) {
+			$rc .= " $suffix";
+		}
+	} elsif($args{'print_unknown'}) {
+		$rc .= ' ?';
+	}
+
+	if($has_maiden_name && $self->surname()) {
+		$rc .= ' (nee ' . normalize_name($self->surname()) . ')';
+	}
+
+	if(!defined($rc)) {
+		if($opts{'f'}) {
+			die "Can't determine name of this person";
+		}
+		if($opts{'w'}) {
+			red_warning({ warning => "Can't determine name of this person" });
+			$args{'include_years'} = 1;
+			$rc = 'Unknown person ';
+		}
+	}
+
+	if($args{'include_years'}) {
+		my $dob = get_value({ person => $self, value => 'birth date' });
+
+		my $yob;	# Year of birth
+		if($dob && ($dob =~ /.*?(\d{3,4})/)) {
+			if($dob =~ /^(Abt|ca?)\.?\s*(.+)/i) {
+				my $year = $2;
+				if($year =~ /^[A-Z]{3}\s(.+)/i) {
+					$yob = "c$1";	# Get the "1951" from "Feb 1951"
+				}
+				$yob = "c$year";
+			} else {
+				$yob = $1;
+			}
+		} else {
+			$dob = get_value({ person => $self, value => 'baptism date' });
+			if($dob && ($dob =~ /.*?(\d{3,4})/)) {
+				$yob = "c$1";
+			}
+		}
+
+		my $dod = get_value({ person => $self, value => 'death date' });
+
+		my $yod;	# Year of death
+		if($dod && ($dod =~ /.*?(\d{3,4})/)) {
+			if($dod =~ /^(Abt|ca?)\.?\s*(.+)/i) {
+				my $year = $2;
+				if($year =~ /^[A-Z]{3}\s(.+)/i) {
+					$yod = "c$1";	# Get the "1951" from "Feb 1951"
+				} else {
+					$yod = "c$year";
+				}
+			} else {
+				$yod = $1;
+			}
+		} else {
+			$dod = get_value({ person => $self, value => 'burial date' });
+			if($dod && ($dod =~ /.*?(\d{3,4})/)) {
+				$yod = "c$1";
+			}
+		}
+
+		$rc .= ' ' if($yob || $yod);
+
+		if($yob) {
+			$rc .= "$yob ";
+		}
+
+		$rc .= '-' if($yob || $yod);
+
+		if($yod) {
+			return "$rc $yod";
+		}
+	}
+
+	if((!defined($rc)) && $opts{'w'}) {
+		complain({ warning => "Can't determine the name for record " . $self->{'xref'} });
+		return '';
+	}
+
+	$rc =~ tr/"/'/;	# fix issues with Graphviz and others - compatibility with ged2site
+
+	return $rc;
+}
+
+sub complain
+{
+	my %params;
+
+	if(ref($_[0]) eq 'HASH') {
+		%params = %{$_[0]};
+	} elsif(scalar(@_) % 2 == 0) {
+		%params = @_;
+	} else {
+		$params{'warning'} = shift;
+	}
+
+	if(!defined($params{'warning'})) {
+		my @call_details = caller(0);
+		die "What do you want to say on line $call_details[2]?";
+	}
+
+	# Support warning being a ref to an array
+	if(ref($params{'warning'}) eq 'ARRAY') {
+		$params{'warning'} = join('', @{$params{'warning'}});
+	}
+	if($opts{'f'}) {
+		my @call_details = caller(0);
+		if($params{'person'}) {
+			die $params{'person'}->as_string(), ': ', ucfirst($params{'warning'}), ' at line ', $call_details[2];
+		}
+		die ucfirst($params{'warning'}), ' at line ', $call_details[2];
+	}
+
+	if($opts{'w'}) {
+		$params{'caller'} = 1;
+		red_warning(%params);
+	}
+}
+
+sub red_warning
+{
+	if($opts{'w'}) {
+		my %params = (ref($_[0]) eq 'HASH') ? %{$_[0]} : @_;
+
+		die "What do you want to say?" unless($params{'warning'});
+
+		my $warning = HTML::Entities::decode($params{'warning'});
+		my @call_details = caller(0);
+		if($params{'person'}) {
+			warn colored(['red'], $params{'person'}->as_string(middle_names => 1), ": $warning at line ", $call_details[2]);
+			push @{$params{'person'}->{'warnings'}}, $warning;
+		} else {
+			warn colored(['red'], $params{'warning'}, ' at line ', $call_details[2]);
+		}
+		if($params{'stack_trace'}) {
+			my $i = 0;
+			while((my @call_details = (caller($i++)))) {
+				print STDERR "\t", colored($call_details[1] . ':' . $call_details[2] . ' calling function ' . $call_details[3], 'red'), "\n";
+			}
+		}
+	}
+}
+
+sub normalize_name
+{
+	# my $name = shift;
+
+	# my $rc;
+	# foreach my $word(split(/-| |'/, lc($name))) {
+		# $rc .= '-' if($rc && ($name =~ /-/));
+		# $rc .= "'" if($rc && ($name =~ /'/));
+		# $rc .= ' ' if($rc && ($name =~ / /));
+		# $rc .= ucfirst($word);
+	# }
+
+	# return $rc;
+
+	return Lingua::EN::NameCase::nc(shift);
+}
