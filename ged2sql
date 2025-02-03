@@ -66,7 +66,7 @@ sub generate {
 		$name =~ s/\///g;
 		$nameparser->parse($name);
 		my %name_components = $nameparser->components();
-		my $firstname = $name_components{'given_name_1'};
+		my $firstname = $name_components{'given_name_1'} // $person->given_names();
 		my $surname = $name_components{'surname_1'};
 		if($surname) {
 			$surname =~ s/\'/\\\'/g;
