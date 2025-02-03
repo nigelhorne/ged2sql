@@ -22,11 +22,9 @@ use warnings::unused;
 
 use DBI;
 use Gedcom;
+use Getopt::Long;
 use Lingua::EN::NameCase;
 use Lingua::EN::NameParse;
-
-my %opts;
-my $sqlite_file = 'out.sql';
 
 BEGIN {
 	$SIG{__WARN__} = sub {
@@ -42,6 +40,15 @@ BEGIN {
 		warn $warning;
 	};
 }
+
+my %opts;
+my $sqlite_file = 'out.sql';
+
+GetOptions(
+	'output=s' => \$sqlite_file,
+	'warnings' => \$opts{w},
+	'fatal' => \$opts{f},
+);
 
 if(-e $sqlite_file) {
 	unlink $sqlite_file;
@@ -91,14 +98,14 @@ sub generate {
 			print "$firstname\n";
 		}
 
-		my $query = "INSERT INTO people('xref', 'surname', 'mother', 'father') VALUES (?, ?, ?, ?);";
+		my $query = "INSERT INTO people(xref, surname, mother, father) VALUES (?, ?, ?, ?);";
 		my $statement = $dbh->prepare($query);
 		print "$xref: $surname\n" if($surname);
 		die unless($statement->execute($xref, $surname, $mother, $father) == 1);
 
 		my @siblings = $person->siblings();
 		if(scalar(@siblings)) {
-			$query = "INSERT INTO siblings('xref', 'sibling') VALUES (?, ?);";
+			$query = "INSERT INTO siblings(xref, sibling) VALUES (?, ?);";
 			$statement = $dbh->prepare($query);
 			foreach my $s(@siblings) {
 				print ">$xref: $surname: ", $s->xref(), "\n" if($surname);
@@ -108,7 +115,7 @@ sub generate {
 
 		my @children = $person->children();
 		if(scalar(@children)) {
-			$query = "INSERT INTO children('xref', 'child') VALUES (?, ?);";
+			$query = "INSERT INTO children(xref, child) VALUES (?, ?);";
 			$statement = $dbh->prepare($query);
 			foreach my $c(@children) {
 				print ">>$xref: $surname: ", $c->xref(), "\n" if($surname);
@@ -118,7 +125,7 @@ sub generate {
 
 		my @spouses = $person->spouse();
 		if(scalar(@spouses)) {
-			$query = "INSERT INTO spouses('xref', 'spouse') VALUES (?, ?);";
+			$query = "INSERT INTO spouses(xref, spouse) VALUES (?, ?);";
 			$statement = $dbh->prepare($query);
 			foreach my $s(@spouses) {
 				print ">>>$xref: $surname: ", $s->xref(), "\n" if($surname);
