@@ -1,2 +1,10 @@
 # ged2sql
-Import a gedcom file into an SQL database
+
+Import genealogical data from a GEDCOM file into an SQLite database.
+It uses Gedcom for parsing, DBI for database interactions, and Lingua::EN modules for name normalization.
+
+# Schema Design
+
+Tables: people, siblings, children, spouses.
+
+Foreign key constraints enforce relational integrity.

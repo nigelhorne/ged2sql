@@ -28,6 +28,21 @@ use Lingua::EN::NameParse;
 my %opts;
 my $sqlite_file = 'out.sql';
 
+BEGIN {
+	$SIG{__WARN__} = sub {
+		my $warning = shift;
+		if(($warning =~ /^Use of uninitialized value/) ||
+		   ($warning =~ /Wide/) ||
+		   ($warning =~ /masks earlier declaration in same scope/) ||
+		   ($warning =~ /: attempt to add consecutive punctuation/) ||
+		   ($warning =~ /^Odd number of elements in hash assignment/) ||
+		   ($warning =~ /isn't numeric in numeric eq /i)) {
+			die $warning;
+		}
+		warn $warning;
+	};
+}
+
 if(-e $sqlite_file) {
 	unlink $sqlite_file;
 }
@@ -59,8 +74,8 @@ sub generate {
 
 	foreach my $person(@{$params{'everyone'}}) {
 		my $xref = $person->xref();
-		my $mother = $person->mother() || 'NULL';
-		my $father = $person->father() || 'NULL';
+		my $mother = $person->mother() || undef;
+		my $father = $person->father() || undef;
 
 		my $name = $person->name();
 		$name =~ s/\///g;
@@ -70,15 +85,15 @@ sub generate {
 		my $surname = $name_components{'surname_1'};
 		if($surname) {
 			$surname =~ s/\'/\\\'/g;
+			print "$firstname, $surname\n";
 		} else {
-			$surname = 'NULL';
+			$surname = undef;
+			print "$firstname\n";
 		}
-
-		print "$firstname, $surname\n";
 
 		my $query = "INSERT INTO people('xref', 'surname', 'mother', 'father') VALUES (?, ?, ?, ?);";
 		my $statement = $dbh->prepare($query);
-		print "$xref: $surname\n";
+		print "$xref: $surname\n" if($surname);
 		die unless($statement->execute($xref, $surname, $mother, $father) == 1);
 
 		my @siblings = $person->siblings();
@@ -86,7 +101,7 @@ sub generate {
 			$query = "INSERT INTO siblings('xref', 'sibling') VALUES (?, ?);";
 			$statement = $dbh->prepare($query);
 			foreach my $s(@siblings) {
-				print ">$xref: $surname: ", $s->xref(), "\n";
+				print ">$xref: $surname: ", $s->xref(), "\n" if($surname);
 				die unless($statement->execute($xref, $s->xref()) == 1);
 			}
 		}
@@ -96,7 +111,7 @@ sub generate {
 			$query = "INSERT INTO children('xref', 'child') VALUES (?, ?);";
 			$statement = $dbh->prepare($query);
 			foreach my $c(@children) {
-				print ">>$xref: $surname: ", $c->xref(), "\n";
+				print ">>$xref: $surname: ", $c->xref(), "\n" if($surname);
 				die unless($statement->execute($xref, $c->xref()) == 1);
 			}
 		}
@@ -106,7 +121,7 @@ sub generate {
 			$query = "INSERT INTO spouses('xref', 'spouse') VALUES (?, ?);";
 			$statement = $dbh->prepare($query);
 			foreach my $s(@spouses) {
-				print ">>>$xref: $surname: ", $s->xref(), "\n";
+				print ">>>$xref: $surname: ", $s->xref(), "\n" if($surname);
 				print $s->as_string(), "\n";
 				die unless($statement->execute($xref, $s->xref()) == 1);
 			}
