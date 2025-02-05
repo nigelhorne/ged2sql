@@ -54,6 +54,8 @@ if(-e $sqlite_file) {
 	unlink $sqlite_file;
 }
 
+$opts{'w'} = 1 if($opts{'f'});
+
 my $dbh = DBI->connect("dbi:SQLite:dbname=$sqlite_file", undef, undef, { RaiseError => 1, AutoCommit => 0, synchronous => 0, locking_mode => 'EXCLUSIVE' });
 $dbh->do('PRAGMA cache_size = 65536');
 $dbh->do('PRAGMA journal_mode = OFF');

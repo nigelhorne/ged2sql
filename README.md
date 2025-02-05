@@ -1,13 +1,16 @@
-# ged2sql
+ged2sql
+=======
 
 Import genealogical data from a GEDCOM file into an SQLite database.
 It uses Gedcom for parsing, DBI for database interactions, and Lingua::EN modules for name normalization.
 
 # Command Line Options
 
--s: Name of sqlite file (default is out.sql)
--w: Enable warnings
--f: Make the warnings fatal
+| Flag | Meaning |
+| ---- | ------- |
+| -s   |  Name of sqlite file (default is out.sql)
+| -f   | treat warnings as fatal, implies -w |
+| -w   | print warnings |
 
 # Schema Design
 
