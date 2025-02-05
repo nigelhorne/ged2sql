@@ -9,7 +9,7 @@ It uses Gedcom for parsing, DBI for database interactions, and Lingua::EN module
 | Flag | Meaning |
 | ---- | ------- |
 | -f   | treat warnings as fatal, implies -w |
-| -s   |  Name of sqlite file (default is out.sql) |
+| -s   |  Name of SQLite file (default is out.sql) |
 | -w   | print warnings |
 
 # Schema Design
